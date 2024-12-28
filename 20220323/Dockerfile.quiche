@@ -1,0 +1,35 @@
+FROM ubuntu:focal as builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+RUN apt-get upgrade -y
+RUN apt-get install -y git
+
+# install quiche
+RUN apt-get install -y cargo cmake g++
+RUN git clone --recursive https://github.com/cloudflare/quiche /quiche
+WORKDIR /quiche
+RUN cargo build --package quiche --release --features ffi,pkg-config-meta,qlog
+RUN mkdir quiche/deps/boringssl/src/lib
+RUN ln -vnf $(find target/release -name libcrypto.a -o -name libssl.a) quiche/deps/boringssl/src/lib/
+
+# install curl
+RUN apt-get install -y autoconf libtool pkg-config
+RUN git clone https://github.com/curl/curl /curl
+WORKDIR /curl
+RUN autoreconf -fi
+RUN ./configure LDFLAGS="-Wl,-rpath,$PWD/../quiche/target/release" --with-openssl=$PWD/../quiche/quiche/deps/boringssl/src --with-quiche=$PWD/../quiche/target/release
+RUN make
+RUN make install
+
+# for copy
+RUN cp /quiche/target/release/libquiche.so /usr/local/lib/ && tar zcf /curl.tar.gz /usr/local/lib/* /usr/local/bin/*
+
+
+FROM ubuntu:focal
+
+COPY --from=builder /curl.tar.gz /
+RUN tar zxf /curl.tar.gz && rm -f /curl.tar.gz
+
+RUN ldconfig

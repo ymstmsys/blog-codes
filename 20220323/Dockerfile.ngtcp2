@@ -1,0 +1,51 @@
+FROM ubuntu:focal as builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update
+RUN apt-get upgrade -y
+RUN apt-get install -y git
+
+# install openssl
+RUN apt-get install -y gcc make
+RUN git clone --depth 1 -b openssl-3.0.0+quic https://github.com/quictls/openssl /openssl
+WORKDIR /openssl
+RUN ./config enable-tls1_3 --prefix=/usr/local
+RUN make
+RUN make install
+
+# install nghttp3
+RUN apt-get install -y autoconf libtool pkg-config
+RUN git clone https://github.com/ngtcp2/nghttp3 /nghttp3
+WORKDIR /nghttp3
+RUN autoreconf -fi
+RUN ./configure --prefix=/usr/local --enable-lib-only
+RUN make
+RUN make install
+
+# install ngtcp2
+RUN git clone https://github.com/ngtcp2/ngtcp2 /ngtcp2
+WORKDIR /ngtcp2
+RUN autoreconf -fi
+RUN ./configure PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/local/lib64" --prefix=/usr/local --enable-lib-only
+RUN make
+RUN make install
+
+# install curl
+RUN git clone https://github.com/curl/curl /curl
+WORKDIR /curl
+RUN autoreconf -fi
+RUN LDFLAGS="-Wl,-rpath,/usr/local/lib64" ./configure --with-openssl=/usr/local --with-nghttp3=/usr/local --with-ngtcp2=/usr/local
+RUN make
+RUN make install
+
+# for copy
+RUN tar zcf /curl.tar.gz /usr/local/lib/* /usr/local/lib64/* /usr/local/bin/*
+
+
+FROM ubuntu:focal
+
+COPY --from=builder /curl.tar.gz /
+RUN tar zxf /curl.tar.gz && rm -f /curl.tar.gz
+
+RUN ldconfig
